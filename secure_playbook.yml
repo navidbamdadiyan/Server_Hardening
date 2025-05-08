@@ -1,0 +1,144 @@
+---
+- name: Universal Linux System Hardening
+  hosts: all
+  become: true
+  vars:
+    admin_email: "your@email.com"
+
+  tasks:
+
+    - name: Update packages (Debian-based)
+      apt:
+        update_cache: yes
+        upgrade: dist
+        autoremove: yes
+        purge: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Update packages (RedHat-based)
+      yum:
+        name: '*'
+        state: latest
+      when: ansible_os_family == "RedHat"
+
+    - name: Install required packages (Debian-based)
+      apt:
+        name:
+          - ufw
+          - fail2ban
+          - auditd
+          - audispd-plugins
+          - unattended-upgrades
+          - logwatch
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Install required packages (RedHat-based)
+      yum:
+        name:
+          - firewalld
+          - fail2ban
+          - audit
+          - logwatch
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Enable UFW (Debian-based)
+      ufw:
+        state: enabled
+        policy: deny
+        direction: incoming
+      when: ansible_os_family == "Debian"
+
+    - name: Allow outgoing traffic (Debian-based)
+      command: ufw default allow outgoing
+      args:
+        warn: false
+      when: ansible_os_family == "Debian"
+
+    - name: Allow SSH through UFW (Debian-based)
+      ufw:
+        rule: allow
+        name: OpenSSH
+      when: ansible_os_family == "Debian"
+
+    - name: Start and enable Firewalld (RedHat-based)
+      systemd:
+        name: firewalld
+        enabled: true
+        state: started
+      when: ansible_os_family == "RedHat"
+
+    - name: Allow SSH in Firewalld
+      firewalld:
+        service: ssh
+        permanent: yes
+        state: enabled
+        immediate: yes
+      when: ansible_os_family == "RedHat"
+
+    - name: Enable and start Fail2Ban
+      systemd:
+        name: fail2ban
+        enabled: true
+        state: started
+
+    - name: Harden SSH - PermitRootLogin
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PermitRootLogin'
+        line: 'PermitRootLogin prohibit-password'
+        state: present
+
+    - name: Harden SSH - PasswordAuthentication
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PasswordAuthentication'
+        line: 'PasswordAuthentication no'
+        state: present
+
+    - name: Harden SSH - PubkeyAuthentication
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PubkeyAuthentication'
+        line: 'PubkeyAuthentication yes'
+        state: present
+
+    - name: Restart SSH
+      systemd:
+        name: sshd
+        state: restarted
+
+    - name: Check AppArmor status (Debian/Ubuntu)
+      command: aa-status
+      register: apparmor_status
+      ignore_errors: true
+      when: ansible_os_family == "Debian"
+
+    - name: Warn if AppArmor not running
+      debug:
+        msg: "AppArmor is not running!"
+      when: ansible_os_family == "Debian" and apparmor_status.rc != 0
+
+    - name: Enable and start auditd
+      systemd:
+        name: auditd
+        enabled: true
+        state: started
+
+    - name: Enable automatic security updates (Debian)
+      debconf:
+        name: unattended-upgrades
+        question: unattended-upgrades/enable_auto_updates
+        value: "true"
+        vtype: boolean
+      when: ansible_os_family == "Debian"
+
+    - name: Run Logwatch once (manual testing)
+      command: >
+        logwatch --detail High --mailto {{ admin_email }}
+        --service all --range today
+      args:
+        warn: false
+      when: ansible_os_family in ["Debian", "RedHat"]
+
